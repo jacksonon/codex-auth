@@ -10,6 +10,22 @@ It manages:
 
 The repo source is [switch_codex_auth.sh](/Users/os/Downloads/private/easy-pass/switch_codex_auth.sh). In this workspace the global command is typically synced to `/Users/os/.local/bin/codex-auth`.
 
+## Install
+
+Copy the script into `~/.local/bin` and make it executable:
+
+```bash
+mkdir -p ~/.local/bin && \
+cp /Users/os/Downloads/private/easy-pass/switch_codex_auth.sh ~/.local/bin/codex-auth && \
+chmod +x ~/.local/bin/codex-auth
+```
+
+If `~/.local/bin` is not already in your `PATH`, add this to your shell profile:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 ## Commands
 
 ```bash
