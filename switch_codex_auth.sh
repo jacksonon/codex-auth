@@ -20,12 +20,15 @@ typeset -ga CHANGE_LOGS=()
 usage() {
   cat <<'EOF'
 Usage:
+  codex-auth help
+  codex-auth --help
+  codex-auth -h
   codex-auth gpt
   codex-auth official
   codex-auth <provider_id>
   codex-auth use <provider_id>
   codex-auth add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>]
-  codex-auth update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--clear-model]
+  codex-auth update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>]
   codex-auth list
   codex-auth status
 
@@ -96,7 +99,9 @@ print_provider_header() {
   print_block_title "${title}: ${provider_id}"
   print_kv "provider" "$provider_name"
   print_kv "base_url" "$base_url"
-  [[ -n "$model" ]] && print_kv "model" "$model"
+  if [[ -n "$model" ]]; then
+    print_kv "model" "$model"
+  fi
 }
 
 print_result_summary() {
@@ -131,10 +136,7 @@ backup_file() {
   local file="$1"
   [[ -f "$file" ]] || return 0
   local backup="${file}.bak"
-  if [[ -f "$backup" ]]; then
-    log_note "backup" "exists: $backup"
-    return 0
-  fi
+  [[ -f "$backup" ]] && return 0
   cp "$file" "$backup"
   log_note "backup" "created: $backup"
 }
@@ -323,14 +325,7 @@ backup_official_auth_if_present() {
       official)
         copy_if_different "$AUTH_FILE" "$OFFICIAL_AUTH_FILE"
         ;;
-      api_key)
-        log_note "official auth" "skip backup: current auth kind is api_key"
-        ;;
-      invalid)
-        log_note "official auth" "skip backup: invalid JSON at $AUTH_FILE"
-        ;;
       *)
-        log_note "official auth" "skip backup: unknown format at $AUTH_FILE"
         ;;
     esac
     return 0
@@ -338,8 +333,6 @@ backup_official_auth_if_present() {
 
   if [[ -f "$LEGACY_GPT_AUTH_FILE" ]] && [[ "$(auth_kind "$LEGACY_GPT_AUTH_FILE")" == "official" ]]; then
     copy_if_different "$LEGACY_GPT_AUTH_FILE" "$OFFICIAL_AUTH_FILE"
-  else
-    log_note "official auth" "skip backup: no official auth file found"
   fi
 }
 
@@ -349,7 +342,7 @@ restore_official_auth_if_present() {
     chmod 600 "$AUTH_FILE" 2>/dev/null || true
     log_note "official auth" "restored: $OFFICIAL_AUTH_FILE"
   else
-    log_note "official auth" "skip restore: backup missing at $OFFICIAL_AUTH_FILE"
+    log_note "official auth" "restore skipped: backup missing"
   fi
 }
 
@@ -590,7 +583,7 @@ config_mode() {
   ' "$CONFIG_FILE"
 }
 
-activate_provider() {
+sync_provider_to_runtime() {
   local provider_id="$1"
   validate_provider_id "$provider_id"
   migrate_legacy_layout
@@ -618,17 +611,41 @@ activate_provider() {
     upsert_top_level_string "model" "$model"
   fi
   set_mode_specific_config "provider"
-  print_status
+}
+
+activate_provider() {
+  local provider_id="$1"
+  local title="${2:-Activate provider}"
+  local provider_file
+  local name
+  local base_url
+  local model
+
+  reset_change_logs
+  provider_file="$(provider_file_for "$provider_id")"
+  require_file "$provider_file"
+  name="$(provider_value "$provider_file" "name")"
+  base_url="$(provider_value "$provider_file" "base_url")"
+  model="$(provider_value "$provider_file" "model" 2>/dev/null || true)"
+
+  sync_provider_to_runtime "$provider_id"
+  print_provider_header "$title" "$provider_id" "$name" "$base_url" "$model"
+  print_change_logs
+  print_result_summary "$(config_mode)" "$(auth_kind "$AUTH_FILE")"
 }
 
 switch_to_official() {
+  reset_change_logs
   migrate_legacy_layout
   require_file "$CONFIG_FILE"
   backup_file "$CONFIG_FILE"
   restore_official_auth_if_present
   set_active_provider "" "official"
   set_mode_specific_config "official"
-  print_status
+
+  print_block_title "Switch to official auth"
+  print_change_logs
+  print_result_summary "$(config_mode)" "$(auth_kind "$AUTH_FILE")"
 }
 
 add_provider() {
@@ -672,8 +689,80 @@ add_provider() {
   [[ -n "$base_url" ]] || fail "--url is required"
   [[ -n "$api_key" ]] || fail "--key is required"
 
+  reset_change_logs
   write_provider_file "$provider_id" "$name" "$base_url" "$api_key" "$model"
-  activate_provider "$provider_id"
+  sync_provider_to_runtime "$provider_id"
+
+  print_provider_header "Add provider" "$provider_id" "$name" "$base_url" "$model"
+  print_change_logs
+  print_result_summary "$(config_mode)" "$(auth_kind "$AUTH_FILE")"
+}
+
+update_provider() {
+  local provider_id="$1"
+  shift
+  validate_provider_id "$provider_id"
+
+  local provider_file
+  provider_file="$(provider_file_for "$provider_id")"
+  require_file "$provider_file"
+
+  local current_name current_base_url current_api_key current_model
+  current_name="$(provider_value "$provider_file" "name")"
+  current_base_url="$(provider_value "$provider_file" "base_url")"
+  current_api_key="$(provider_value "$provider_file" "api_key")"
+  current_model="$(provider_value "$provider_file" "model" 2>/dev/null || true)"
+
+  local name="$current_name"
+  local base_url="$current_base_url"
+  local api_key="$current_api_key"
+  local model="$current_model"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)
+        [[ $# -ge 2 ]] || fail "missing value for --name"
+        name="$2"
+        shift 2
+        ;;
+      --url|--base-url)
+        [[ $# -ge 2 ]] || fail "missing value for --url"
+        base_url="$2"
+        shift 2
+        ;;
+      --key|--api-key)
+        [[ $# -ge 2 ]] || fail "missing value for --key"
+        api_key="$2"
+        shift 2
+        ;;
+      --model)
+        [[ $# -ge 2 ]] || fail "missing value for --model"
+        model="$2"
+        shift 2
+        ;;
+      *)
+        fail "unknown option for update: $1"
+        ;;
+    esac
+  done
+
+  if [[ "$name" == "$current_name" && "$base_url" == "$current_base_url" && "$api_key" == "$current_api_key" && "$model" == "$current_model" ]]; then
+    fail "no provider fields changed for $provider_id"
+  fi
+
+  reset_change_logs
+  write_provider_file "$provider_id" "$name" "$base_url" "$api_key" "$model"
+
+  if [[ "$(config_mode)" == "$provider_id" ]]; then
+    sync_provider_to_runtime "$provider_id"
+  fi
+
+  print_provider_header "Update provider" "$provider_id" "$name" "$base_url" "$model"
+  print_change_logs
+  print_block_title "Result"
+  print_kv "active" "$( [[ "$(config_mode)" == "$provider_id" ]] && echo yes || echo no )"
+  print_kv "stored" "yes"
+  [[ "$(config_mode)" == "$provider_id" ]] && print_kv "auth_kind" "$(auth_kind "$AUTH_FILE")"
 }
 
 list_providers() {
@@ -734,6 +823,11 @@ main() {
   local action="${1:-}"
 
   case "$action" in
+    help|-h|--help)
+      shift
+      [[ $# -eq 0 ]] || fail "unexpected arguments for $action"
+      usage
+      ;;
     gpt|official)
       shift
       [[ $# -eq 0 ]] || fail "unexpected arguments for $action"
@@ -753,6 +847,13 @@ main() {
       local provider_id="$1"
       shift
       add_provider "$provider_id" "$@"
+      ;;
+    update)
+      shift
+      [[ $# -ge 1 ]] || fail "provider_id is required for update"
+      local provider_id="$1"
+      shift
+      update_provider "$provider_id" "$@"
       ;;
     list)
       shift
