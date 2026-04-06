@@ -1,0 +1,78 @@
+name: Bun Build Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-binaries:
+    name: Build and Archive Bun Binaries
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify toolchain
+        run: |
+          bun --version
+          node --version
+
+      - name: Build binaries
+        run: bun run build
+
+      - name: Generate checksums
+        run: |
+          mkdir -p release-artifacts
+          shasum -a 256 dist/* > release-artifacts/SHA256SUMS.txt
+
+      - name: Archive binaries
+        run: |
+          cp dist/agent-auth-macos-x64 release-artifacts/
+          cp dist/agent-auth-macos-arm64 release-artifacts/
+          cp dist/agent-auth-windows-x64.exe release-artifacts/
+          cd release-artifacts
+          zip -9 agent-auth-macos-x64.zip agent-auth-macos-x64
+          zip -9 agent-auth-macos-arm64.zip agent-auth-macos-arm64
+          zip -9 agent-auth-windows-x64.zip agent-auth-windows-x64.exe
+
+      - name: Upload raw binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-binaries-${{ github.run_number }}
+          path: |
+            dist/agent-auth-macos-x64
+            dist/agent-auth-macos-arm64
+            dist/agent-auth-windows-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload archived bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-archives-${{ github.run_number }}
+          path: |
+            release-artifacts/agent-auth-macos-x64.zip
+            release-artifacts/agent-auth-macos-arm64.zip
+            release-artifacts/agent-auth-windows-x64.zip
+            release-artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Upload dist directory snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-directory-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error

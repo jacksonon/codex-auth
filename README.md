@@ -58,12 +58,14 @@ agent-auth <agent> official
 agent-auth <agent> use <provider_id>
 agent-auth <agent> add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]
 agent-auth <agent> update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]
+agent-auth <agent> delete <provider_id>
 ```
 
 Notes:
 - `--url` and `--key` are the standard input fields for all built-in agents.
 - `--env KEY=VALUE` can be repeated for agent-specific extensions.
 - `--unset-env KEY` is available on `update` to remove a previously stored env override.
+- `delete` removes the stored provider. If that provider is currently active, `agent-auth` falls back to `official` first so runtime state stays consistent.
 
 ## Examples
 

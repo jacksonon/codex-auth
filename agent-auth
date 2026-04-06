@@ -7,6 +7,7 @@ LEGACY_CODEX_AUTH_DIR="${LEGACY_CODEX_AUTH_DIR:-$HOME/.codex-auth}"
 
 PROVIDERS_ROOT="$AGENT_AUTH_DIR/providers"
 STATE_DIR="$AGENT_AUTH_DIR/state"
+MIGRATIONS_DIR="$AGENT_AUTH_DIR/migrations"
 
 CODEX_DIR="${CODEX_DIR:-$HOME/.codex}"
 CODEX_CONFIG_FILE="$CODEX_DIR/config.toml"
@@ -37,6 +38,7 @@ Usage:
   agent-auth <agent> use <provider_id>
   agent-auth <agent> add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]
   agent-auth <agent> update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]
+  agent-auth <agent> delete <provider_id>
 
 Agents:
   codex   Render provider config into ~/.codex/config.toml + ~/.codex/auth.json
@@ -61,6 +63,7 @@ Usage:
   agent-auth $agent use <provider_id>
   agent-auth $agent add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]
   agent-auth $agent update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]
+  agent-auth $agent delete <provider_id>
 EOF
 }
 
@@ -153,11 +156,11 @@ nearest_existing_dir() {
   local dir="$path"
 
   if [[ ! -d "$dir" ]]; then
-    dir="$(dirname "$dir")"
+    dir="${dir:h}"
   fi
 
   while [[ ! -d "$dir" && "$dir" != "/" ]]; do
-    dir="$(dirname "$dir")"
+    dir="${dir:h}"
   done
 
   echo "$dir"
@@ -178,8 +181,8 @@ require_writable_path() {
 }
 
 ensure_root_layout() {
-  mkdir -p "$AGENT_AUTH_DIR" "$PROVIDERS_ROOT" "$STATE_DIR"
-  chmod 700 "$AGENT_AUTH_DIR" "$PROVIDERS_ROOT" "$STATE_DIR" 2>/dev/null || true
+  mkdir -p "$AGENT_AUTH_DIR" "$PROVIDERS_ROOT" "$STATE_DIR" "$MIGRATIONS_DIR"
+  chmod 700 "$AGENT_AUTH_DIR" "$PROVIDERS_ROOT" "$STATE_DIR" "$MIGRATIONS_DIR" 2>/dev/null || true
 }
 
 ensure_agent_layout() {
@@ -228,6 +231,11 @@ provider_exists() {
 state_file_for() {
   local agent="$1"
   echo "$STATE_DIR/$agent.json"
+}
+
+migration_marker_for() {
+  local name="$1"
+  echo "$MIGRATIONS_DIR/$name.done"
 }
 
 official_backup_for() {
@@ -279,7 +287,7 @@ backup_file() {
 copy_if_different() {
   local source="$1"
   local destination="$2"
-  mkdir -p "$(dirname "$destination")"
+  mkdir -p "${destination:h}"
   if files_match "$source" "$destination"; then
     return 0
   fi
@@ -422,6 +430,13 @@ state_value() {
 migrate_legacy_codex_storage_if_needed() {
   ensure_agent_layout "codex"
 
+  local marker
+  marker="$(migration_marker_for "codex_legacy_storage_v1")"
+
+  if [[ -f "$marker" ]]; then
+    return 0
+  fi
+
   [[ -d "$LEGACY_CODEX_AUTH_DIR" ]] || return 0
 
   local legacy_official="$LEGACY_CODEX_AUTH_DIR/openai/auth.json"
@@ -429,7 +444,7 @@ migrate_legacy_codex_storage_if_needed() {
   new_official="$(official_backup_for codex)"
 
   if [[ -f "$legacy_official" && ! -f "$new_official" ]]; then
-    mkdir -p "$(dirname "$new_official")"
+    mkdir -p "${new_official:h}"
     cp "$legacy_official" "$new_official"
     chmod 600 "$new_official" 2>/dev/null || true
   fi
@@ -466,6 +481,19 @@ migrate_legacy_codex_storage_if_needed() {
     ' "$legacy_file" "$target_file" "$provider_id"
     chmod 600 "$target_file" 2>/dev/null || true
   done
+
+  : > "$marker"
+  chmod 600 "$marker" 2>/dev/null || true
+}
+
+remove_legacy_codex_provider_if_present() {
+  local provider_id="$1"
+  local legacy_provider_file="$LEGACY_CODEX_AUTH_DIR/providers/$provider_id.json"
+
+  [[ -f "$legacy_provider_file" ]] || return 0
+
+  rm -f "$legacy_provider_file"
+  log_note "legacy provider" "deleted: $legacy_provider_file"
 }
 
 write_provider_file() {
@@ -730,6 +758,29 @@ upsert_codex_provider_section() {
   log_note "config" "provider section refreshed: [model_providers.$provider_id]"
 }
 
+remove_codex_provider_section() {
+  local provider_id="$1"
+
+  [[ -f "$CODEX_CONFIG_FILE" ]] || return 0
+
+  ruby -e '
+    path = ARGV[0]
+    provider_id = ARGV[1]
+    header = "[model_providers.#{provider_id}]"
+    lines = File.read(path).lines
+
+    start = lines.index { |line| line.strip == header }
+    exit 0 if start.nil?
+
+    finish = lines[(start + 1)..].index { |line| line.match?(/^\s*\[[^\]]+\]\s*$/) }
+    finish = finish.nil? ? lines.length : start + 1 + finish
+    lines = lines[0...start] + lines[finish..]
+    File.write(path, lines.join)
+  ' "$CODEX_CONFIG_FILE" "$provider_id"
+
+  log_note "config" "provider section removed: [model_providers.$provider_id]"
+}
+
 codex_config_mode() {
   ruby -e '
     text = File.read(ARGV[0])
@@ -842,7 +893,7 @@ sync_claude_provider() {
   local backup
   backup="$(official_backup_for claude)"
   if [[ -f "$CLAUDE_SETTINGS_FILE" && ! -f "$backup" ]]; then
-    mkdir -p "$(dirname "$backup")"
+    mkdir -p "${backup:h}"
     cp "$CLAUDE_SETTINGS_FILE" "$backup"
     chmod 600 "$backup" 2>/dev/null || true
     log_note "backup" "created: $backup"
@@ -933,7 +984,7 @@ sync_gemini_provider() {
   local backup
   backup="$(official_backup_for gemini)"
   if [[ -f "$GEMINI_ENV_FILE" && ! -f "$backup" ]]; then
-    mkdir -p "$(dirname "$backup")"
+    mkdir -p "${backup:h}"
     cp "$GEMINI_ENV_FILE" "$backup"
     chmod 600 "$backup" 2>/dev/null || true
     log_note "backup" "created: $backup"
@@ -1254,6 +1305,53 @@ update_provider() {
   print_kv "stored" "yes"
 }
 
+delete_provider() {
+  local agent="$1"
+  local provider_id="$2"
+
+  validate_provider_id "$provider_id"
+
+  local provider_file
+  provider_file="$(provider_file_for "$agent" "$provider_id")"
+  require_file "$provider_file"
+
+  local active_provider
+  active_provider="$(state_value "$agent" "provider_id" 2>/dev/null || true)"
+
+  reset_change_logs
+
+  if [[ "$active_provider" == "$provider_id" ]]; then
+    switch_to_official "$agent" >/dev/null
+    reset_change_logs
+  fi
+
+  rm -f "$provider_file"
+  log_note "provider" "deleted: $provider_file"
+
+  if [[ "$agent" == "codex" ]]; then
+    remove_legacy_codex_provider_if_present "$provider_id"
+    require_writable_path "$CODEX_CONFIG_FILE" "codex config"
+    remove_codex_provider_section "$provider_id"
+  fi
+
+  local was_active="no"
+  if [[ "$active_provider" == "$provider_id" ]]; then
+    was_active="yes"
+  fi
+
+  local runtime_mode
+  runtime_mode="$(state_value "$agent" "mode" 2>/dev/null || echo "unknown")"
+
+  print_block_title "Delete provider: ${agent}/${provider_id}"
+  print_change_logs
+  print_block_title "Result"
+  print_kv "agent" "$agent"
+  print_kv "provider_id" "$provider_id"
+  print_kv "deleted" "yes"
+  print_kv "was_active" "$was_active"
+  print_kv "state_mode" "$runtime_mode"
+}
+
 list_providers() {
   local agent="$1"
   ensure_agent_layout "$agent"
@@ -1407,6 +1505,14 @@ main() {
       local update_provider_id="$1"
       shift
       update_provider "$agent" "$update_provider_id" "$@"
+      ;;
+    delete|remove|rm)
+      shift
+      [[ $# -ge 1 ]] || fail "provider_id is required for $agent delete"
+      local delete_provider_id="$1"
+      shift
+      [[ $# -eq 0 ]] || fail "unexpected arguments for $agent delete"
+      delete_provider "$agent" "$delete_provider_id"
       ;;
     *)
       fail "unknown command for $agent: $subcommand"

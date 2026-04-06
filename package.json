@@ -1,0 +1,21 @@
+{
+  "name": "easy-pass-agent-auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "bin": {
+    "agent-auth-node": "./agent-auth-node.js"
+  },
+  "scripts": {
+    "build": "node ./scripts/build-binaries.mjs all",
+    "build:macos": "node ./scripts/build-binaries.mjs macos-x64 macos-arm64",
+    "build:windows": "node ./scripts/build-binaries.mjs windows-x64",
+    "build:macos:x64": "node ./scripts/build-binaries.mjs macos-x64",
+    "build:macos:arm64": "node ./scripts/build-binaries.mjs macos-arm64",
+    "build:windows:x64": "node ./scripts/build-binaries.mjs windows-x64"
+  },
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.1.0"
+  }
+}
