@@ -114,8 +114,13 @@ print_provider_header() {
   print_block_title "${title}: ${agent}/${provider_id}"
   print_kv "agent" "$agent"
   print_kv "provider" "$provider_name"
-  [[ -n "$base_url" ]] && print_kv "base_url" "$base_url"
-  [[ -n "$model" ]] && print_kv "model" "$model"
+  if [[ -n "$base_url" ]]; then
+    print_kv "base_url" "$base_url"
+  fi
+  if [[ -n "$model" ]]; then
+    print_kv "model" "$model"
+  fi
+  return 0
 }
 
 print_result_summary() {
@@ -141,6 +146,35 @@ describe_file_state() {
 require_file() {
   local file="$1"
   [[ -f "$file" ]] || fail "missing file: $file"
+}
+
+nearest_existing_dir() {
+  local path="$1"
+  local dir="$path"
+
+  if [[ ! -d "$dir" ]]; then
+    dir="$(dirname "$dir")"
+  fi
+
+  while [[ ! -d "$dir" && "$dir" != "/" ]]; do
+    dir="$(dirname "$dir")"
+  done
+
+  echo "$dir"
+}
+
+require_writable_path() {
+  local path="$1"
+  local label="${2:-path}"
+  local existing_dir
+
+  if [[ -e "$path" ]]; then
+    [[ -w "$path" ]] || fail "cannot write $label: $path (check filesystem permissions or the current Codex sandbox)"
+    return 0
+  fi
+
+  existing_dir="$(nearest_existing_dir "$path")"
+  [[ -w "$existing_dir" ]] || fail "cannot create $label: $path (parent directory is not writable; check filesystem permissions or the current Codex sandbox)"
 }
 
 ensure_root_layout() {
@@ -349,6 +383,7 @@ write_state_file() {
   local provider_id="${3:-}"
 
   ensure_root_layout
+  require_writable_path "$(state_file_for "$agent")" "state file"
 
   ruby -rjson -rtime -e '
     path = ARGV[0]
@@ -446,6 +481,7 @@ write_provider_file() {
 
   file="$(provider_file_for "$agent" "$provider_id")"
   ensure_agent_layout "$agent"
+  require_writable_path "$file" "provider file"
 
   ruby -rjson -rtime -e '
     path = ARGV[0]
@@ -751,6 +787,10 @@ sync_codex_provider() {
   require_file "$provider_file"
 
   mkdir -p "$CODEX_DIR"
+  require_writable_path "$CODEX_CONFIG_FILE" "codex config"
+  require_writable_path "$CODEX_AUTH_FILE" "codex auth"
+  [[ -f "${CODEX_CONFIG_FILE}.bak" ]] || require_writable_path "${CODEX_CONFIG_FILE}.bak" "codex config backup"
+  [[ -f "$(official_backup_for codex)" ]] || require_writable_path "$(official_backup_for codex)" "codex official backup"
   require_file "$CODEX_CONFIG_FILE"
   backup_file "$CODEX_CONFIG_FILE"
   backup_codex_official_if_present
@@ -774,6 +814,10 @@ sync_codex_provider() {
 
 switch_codex_to_official() {
   mkdir -p "$CODEX_DIR"
+  require_writable_path "$CODEX_CONFIG_FILE" "codex config"
+  require_writable_path "$CODEX_AUTH_FILE" "codex auth"
+  [[ -f "${CODEX_CONFIG_FILE}.bak" ]] || require_writable_path "${CODEX_CONFIG_FILE}.bak" "codex config backup"
+  [[ -f "$(official_backup_for codex)" ]] || require_writable_path "$(official_backup_for codex)" "codex official backup"
   require_file "$CODEX_CONFIG_FILE"
   backup_file "$CODEX_CONFIG_FILE"
   backup_codex_official_if_present
@@ -792,6 +836,8 @@ sync_claude_provider() {
   require_file "$provider_file"
 
   mkdir -p "$CLAUDE_DIR"
+  require_writable_path "$CLAUDE_SETTINGS_FILE" "claude settings"
+  [[ -f "$(official_backup_for claude)" ]] || require_writable_path "$(official_backup_for claude)" "claude official backup"
 
   local backup
   backup="$(official_backup_for claude)"
@@ -838,6 +884,8 @@ sync_claude_provider() {
 
 switch_claude_to_official() {
   mkdir -p "$CLAUDE_DIR"
+  require_writable_path "$CLAUDE_SETTINGS_FILE" "claude settings"
+  [[ -f "$(official_backup_for claude)" ]] || require_writable_path "$(official_backup_for claude)" "claude official backup"
 
   local backup
   backup="$(official_backup_for claude)"
@@ -879,6 +927,8 @@ sync_gemini_provider() {
   require_file "$provider_file"
 
   mkdir -p "$GEMINI_DIR"
+  require_writable_path "$GEMINI_ENV_FILE" "gemini env file"
+  [[ -f "$(official_backup_for gemini)" ]] || require_writable_path "$(official_backup_for gemini)" "gemini official backup"
 
   local backup
   backup="$(official_backup_for gemini)"
@@ -928,6 +978,8 @@ sync_gemini_provider() {
 
 switch_gemini_to_official() {
   mkdir -p "$GEMINI_DIR"
+  require_writable_path "$GEMINI_ENV_FILE" "gemini env file"
+  [[ -f "$(official_backup_for gemini)" ]] || require_writable_path "$(official_backup_for gemini)" "gemini official backup"
 
   local backup
   backup="$(official_backup_for gemini)"
