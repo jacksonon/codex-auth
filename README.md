@@ -83,6 +83,7 @@ agent-auth codex add packycode \
 agent-auth codex use packycode
 agent-auth codex status
 agent-auth codex official
+agent-auth codex sessions 2026 --short-id
 ```
 
 ### Claude

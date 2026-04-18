@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="${0:A:h}"
+
 AGENT_AUTH_DIR="${AGENT_AUTH_DIR:-$HOME/.agent-auth}"
 LEGACY_CODEX_AUTH_DIR="${LEGACY_CODEX_AUTH_DIR:-$HOME/.codex-auth}"
 
@@ -39,6 +41,7 @@ Usage:
   agent-auth <agent> add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]
   agent-auth <agent> update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]
   agent-auth <agent> delete <provider_id>
+  agent-auth codex sessions [YYYY|YYYYMM|YYYYMMDD] [--table|--tsv|--json] [--full] [--short-id] [--limit N]
 
 Agents:
   codex   Render provider config into ~/.codex/config.toml + ~/.codex/auth.json
@@ -65,6 +68,12 @@ Usage:
   agent-auth $agent update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]
   agent-auth $agent delete <provider_id>
 EOF
+
+  if [[ "$agent" == "codex" ]]; then
+    cat <<'EOF'
+  agent-auth codex sessions [YYYY|YYYYMM|YYYYMMDD] [--table|--tsv|--json] [--full] [--short-id] [--limit N]
+EOF
+  fi
 }
 
 fail() {
@@ -879,6 +888,15 @@ switch_codex_to_official() {
   write_state_file "codex" "official" ""
 }
 
+codex_sessions() {
+  command -v node >/dev/null 2>&1 || fail "node is required for 'agent-auth codex sessions'"
+
+  local helper="${CODEX_SESSIONS_LIST_SCRIPT:-$SCRIPT_DIR/codex_sessions_list.mjs}"
+  [[ -f "$helper" ]] || fail "missing helper script: $helper (reinstall agent-auth to include codex session tools)"
+
+  node "$helper" "$@"
+}
+
 sync_claude_provider() {
   local provider_id="$1"
   local provider_file
@@ -1477,6 +1495,11 @@ main() {
       shift
       [[ $# -eq 0 ]] || fail "unexpected arguments for $agent status"
       print_status "$agent"
+      ;;
+    sessions|session)
+      shift
+      [[ "$agent" == "codex" ]] || fail "command is only supported for codex: $agent $subcommand"
+      codex_sessions "$@"
       ;;
     official)
       shift

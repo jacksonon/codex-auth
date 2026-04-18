@@ -33,11 +33,14 @@ function fail(message) {
 }
 
 function usage() {
-  process.stdout.write(`Usage:\n  agent-auth help\n  agent-auth agents\n\n  agent-auth <agent> help\n  agent-auth <agent> list\n  agent-auth <agent> status\n  agent-auth <agent> official\n  agent-auth <agent> use <provider_id>\n  agent-auth <agent> add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]\n  agent-auth <agent> update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]\n  agent-auth <agent> delete <provider_id>\n\nAgents:\n  codex   Render provider config into ~/.codex/config.toml + ~/.codex/auth.json\n  claude  Render provider env into ~/.claude/settings.json\n  gemini  Render provider env into ~/.gemini/.env\n\nNotes:\n  - Provider registry is stored under ~/.agent-auth/providers/<agent>/<provider_id>.json\n  - agent-auth keeps per-agent state in ~/.agent-auth/state/<agent>.json\n  - claude / gemini use common --url and --key flags, then map them to their runtime env names\n  - Extra provider-specific env vars can be supplied with repeated --env KEY=VALUE flags\n`);
+  process.stdout.write(`Usage:\n  agent-auth help\n  agent-auth agents\n\n  agent-auth <agent> help\n  agent-auth <agent> list\n  agent-auth <agent> status\n  agent-auth <agent> official\n  agent-auth <agent> use <provider_id>\n  agent-auth <agent> add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]\n  agent-auth <agent> update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]\n  agent-auth <agent> delete <provider_id>\n  agent-auth codex sessions [YYYY|YYYYMM|YYYYMMDD] [--table|--tsv|--json] [--full] [--short-id] [--limit N]\n\nAgents:\n  codex   Render provider config into ~/.codex/config.toml + ~/.codex/auth.json\n  claude  Render provider env into ~/.claude/settings.json\n  gemini  Render provider env into ~/.gemini/.env\n\nNotes:\n  - Provider registry is stored under ~/.agent-auth/providers/<agent>/<provider_id>.json\n  - agent-auth keeps per-agent state in ~/.agent-auth/state/<agent>.json\n  - claude / gemini use common --url and --key flags, then map them to their runtime env names\n  - Extra provider-specific env vars can be supplied with repeated --env KEY=VALUE flags\n`);
 }
 
 function usageForAgent(agent) {
   process.stdout.write(`Usage:\n  agent-auth ${agent} list\n  agent-auth ${agent} status\n  agent-auth ${agent} official\n  agent-auth ${agent} use <provider_id>\n  agent-auth ${agent} add <provider_id> --url <base_url> --key <api_key> [--name <display_name>] [--model <model>] [--env KEY=VALUE ...]\n  agent-auth ${agent} update <provider_id> [--name <display_name>] [--url <base_url>] [--key <api_key>] [--model <model>] [--env KEY=VALUE ...] [--unset-env KEY ...]\n  agent-auth ${agent} delete <provider_id>\n`);
+  if (agent === 'codex') {
+    process.stdout.write('  agent-auth codex sessions [YYYY|YYYYMM|YYYYMMDD] [--table|--tsv|--json] [--full] [--short-id] [--limit N]\\n');
+  }
 }
 
 function printBlockTitle(title) {
@@ -1044,7 +1047,7 @@ function printStatus(agent) {
   }
 }
 
-function main(argv) {
+async function main(argv) {
   const action = argv[0] || '';
   if (action === 'help' || action === '-h' || action === '--help' || action === '') {
     if (argv.length > 1) fail('unexpected arguments for help');
@@ -1079,6 +1082,17 @@ function main(argv) {
     printStatus(agent);
     return;
   }
+  if (subcommand === 'sessions' || subcommand === 'session') {
+    if (agent !== 'codex') fail(`unknown command for ${agent}: ${subcommand}`);
+    const { runCodexSessionsList } = await import('./codex_sessions_list.mjs');
+    const code = await runCodexSessionsList(rest, {
+      stdout: process.stdout,
+      stderr: process.stderr,
+      terminalWidth: process.stdout.columns,
+    });
+    if (code !== 0) process.exit(code);
+    return;
+  }
   if (subcommand === 'official') {
     if (rest.length !== 0) fail(`unexpected arguments for ${agent} official`);
     switchToOfficial(agent);
@@ -1111,4 +1125,4 @@ function main(argv) {
   fail(`unknown command for ${agent}: ${subcommand}`);
 }
 
-main(process.argv.slice(2));
+main(process.argv.slice(2)).catch((err) => fail(err?.message ?? String(err)));
